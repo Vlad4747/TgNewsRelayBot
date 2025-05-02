@@ -75,20 +75,17 @@ def load_history(db_file, max_size):
             })
     return history
 
-def save_history(history, db_file, max_size):
+def save_history(item, db_file):
     with db_connection(db_file) as conn:
         cursor = conn.cursor()
-        for item in history:
-            try:
-                cursor.execute(
-                    "INSERT OR IGNORE INTO news_history (title, link, timestamp, source_url) VALUES (?, ?, ?, ?)",
-                    (item["title"], item["link"], item["timestamp"], item["source_url"])
-                )
-            except sqlite3.IntegrityError:
-                continue
-        conn.commit()
-        cursor.execute("DELETE FROM news_history WHERE id NOT IN (SELECT id FROM news_history ORDER BY timestamp DESC LIMIT ?)", (max_size,))
-        conn.commit()
+        try:
+            cursor.execute(
+                "INSERT OR IGNORE INTO news_history (title, link, timestamp, source_url) VALUES (?, ?, ?, ?)",
+                (item["title"], item["link"], item["timestamp"], item["source_url"])
+            )
+            conn.commit()
+        except sqlite3.IntegrityError:
+            logger.warning(f"Новость уже в базе: {item['link']}")
 
 async def parse_news(url, max_articles, proxy_config):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
@@ -130,33 +127,20 @@ async def parse_news(url, max_articles, proxy_config):
                 logger.info(f"Спарсено {len(news_list)} новостей с {url} через прокси")
                 soup.decompose()
                 return news_list
-    except ProxyError as e:
-        logger.error(f"Ошибка прокси для {url}: {e}")
-        return []
-    except ValueError as e:
-        logger.error(f"Ошибка значения в настройках прокси для {url}: {e}")
-        return []
-    except TypeError as e:
-        logger.error(f"Ошибка типа в настройках прокси для {url}: {e}")
-        return []
-    except aiohttp.ClientError as e:
-        logger.error(f"Ошибка клиента HTTP для {url}: {e}")
-        return []
     except Exception as e:
-        logger.error(f"Неожиданная ошибка при парсинге {url}: {e}")
+        logger.error(f"Ошибка при парсинге {url}: {e}")
         return []
     finally:
         gc.collect()
 
 def publish_news(app, config, history):
     published_links = {item["link"] for item in history}
-    published_titles = {item["title"] for item in history}
+    new_posts_count = 0
     
-    new_posts = []
     for site in config["parsing"]["sites"]:
         news_list = asyncio.run(parse_news(site["url"], site["max_articles"], config["proxy"]))
         for news in news_list:
-            if news["link"] not in published_links and news["title"] not in published_titles:
+            if news["link"] not in published_links:
                 post_text = f"📰 {news['title']}\n\n{news['description']}\n\n🔗 {news['link']}"
                 for channel_id in config["telegram"]["channels"]:
                     try:
@@ -167,18 +151,22 @@ def publish_news(app, config, history):
                         logger.info(f"Новость опубликована в {channel_id}: {news['title']}")
                     except Exception as e:
                         logger.error(f"Ошибка публикации в {channel_id}: {e}")
-                new_posts.append({
+                
+                # Сразу добавляем новость в историю и базу
+                news_item = {
                     "title": news["title"],
                     "link": news["link"],
                     "timestamp": asyncio.get_event_loop().time(),
                     "source_url": news["source_url"]
-                })
+                }
+                history.append(news_item)
+                save_history(news_item, config["parsing"]["history_db"])
+                published_links.add(news["link"])  # Обновляем published_links
+                new_posts_count += 1
     
-    if new_posts:
-        history.extend(new_posts)
-        save_history(new_posts, config["parsing"]["history_db"], config["parsing"]["max_history_size"])
-    return len(new_posts)
+    return new_posts_count
 
+# Остальные функции (команды, меню, обработчики) без изменений
 main_menu = ReplyKeyboardMarkup(
     [
         ["/status", "/stats"],
@@ -199,8 +187,6 @@ app = Client(
     api_hash=config["telegram"]["api_hash"],
     bot_token=config["telegram"]["token"]
 )
-
-
 
 @app.on_message(filters.command("start") & filters.user([config["telegram"]["admin_id"]]))
 async def start_command(client, message):
@@ -261,7 +247,7 @@ async def stats_command(client, message):
 async def parse_command(client, message):
     config = load_config()
     history = load_history(config["parsing"]["history_db"], config["parsing"]["max_history_size"])
-    count = await publish_news(client, config, history)
+    count = publish_news(client, config, history)
     await message.reply(f"📰 Парсинг завершен. Опубликовано {count} новых новостей.", reply_markup=main_menu)
 
 @app.on_message(filters.command("listposts") & filters.user([config["telegram"]["admin_id"]]))
@@ -385,13 +371,13 @@ async def cancel_action(client, callback_query):
     await callback_query.message.edit_text("❌ Действие отменено.", reply_markup=None)
     await callback_query.message.reply("Вернуться в меню?", reply_markup=main_menu)
 
-
 def main():
     global auto_parsing
     auto_parsing = True
     
     init_db(config["parsing"]["history_db"])
     history = load_history(config["parsing"]["history_db"], config["parsing"]["max_history_size"])
+    
     def loop():
         time.sleep(60)
         try:
@@ -405,6 +391,7 @@ def main():
             raise
         finally:
             gc.collect()
+    
     threading.Thread(target=loop).start()
     app.run()
 
