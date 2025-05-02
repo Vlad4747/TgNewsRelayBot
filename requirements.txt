@@ -1,0 +1,7 @@
+aiohttp_socks
+beautifulsoup4
+https://github.com/KurimuzonAkuma/pyrogram/archive/v2.1.33.zip
+pyyaml
+aiohttp_socks
+psutil
+TgCrypto

@@ -1,0 +1,12 @@
+services:
+  news_bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: telegram_news_bot
+    volumes:
+      - /home/moon/containers/TGCNews/news_history.db:/app/news_history.db:z
+      - /home/moon/containers/TGCNews/config.yml:/app/config.yml:z
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1

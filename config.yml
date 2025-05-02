@@ -1,0 +1,22 @@
+telegram:
+  api_id: 1245787
+  api_hash: "6ef90567cf61c58"
+  token: "7613107560:AAHQRLrdXit6DqXi92C0oNOVfWK45MZjO60"
+  admin_id: 1234567
+  channels:
+    - -100266867
+
+proxy:
+  scheme: "socks5"
+  hostname: "127.0.0.1"
+  port: 9093
+  username: ""
+  password: ""
+parsing:
+  sites:
+    - url: https://habr.com/ru/news/
+      max_articles: 16
+  interval_seconds: 3600
+  history_db: news_history.db
+  max_history_size: 100
+
